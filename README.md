@@ -1,239 +1,27 @@
-import SwiftUI
+# Fireworks
 
-struct ContentView: View {
-    @StateObject private var engine = FireworksEngine()
-    @State private var isRunning = false
+A lightweight SwiftUI demo that renders colorful, animated fireworks using `Canvas`, `TimelineView`, and a compact particle system. Tap the Start/Stop button to launch rockets that burst into glowing particles with additive blending.
 
-    var body: some View {
-        GeometryReader { geometry in
-            TimelineView(.animation) { timeline in
-                Canvas { context, size in
-                    engine.step(time: timeline.date, in: CGRect(origin: .zero, size: size))
+> Built with SwiftUI. Tested with Xcode 26 on iOS Simulator. Uses only standard Apple frameworks — no third‑party dependencies.
 
-                    context.blendMode = .plusLighter
 
-                    for rocket in engine.rockets {
-                        var rocketContext = context
-                        let rect = CGRect(x: rocket.position.x - 2, y: rocket.position.y - 10, width: 4, height: 20)
-                        rocketContext.fill(
-                            Path(ellipseIn: rect),
-                            with: .color(.white)
-                        )
-                    }
+## How it works
 
-                    for particle in engine.particles {
-                        var particleContext = context
-                        let rect = CGRect(x: particle.position.x - particle.radius, y: particle.position.y - particle.radius, width: particle.radius * 2, height: particle.radius * 2)
+- Frame-driven updates: A `TimelineView(.animation)` ticks the simulation at the display’s refresh rate. Each tick advances the physics using the elapsed time since the last frame.
+- Compact particle system: The simulation tracks a small set of value types (rockets and particles) in arrays for efficiency. No per-particle views are created — everything is drawn in one `Canvas` pass.
+- Launching rockets: When you tap Start, a timer periodically adds new rockets with randomized launch angles, speeds, and fuse times. Each rocket ascends under gravity and air drag until it bursts.
+- Bursting into particles: On burst, dozens to hundreds of particles are emitted in a radial pattern with varied speeds, hues, lifetimes, and sizes. Particles fade out over time while gravity pulls them downward and drag slows them.
+- Rendering & blending: The `Canvas` draws soft circles (or radial gradients) for each particle. Additive blending (e.g., `.blendMode(.plusLighter)`) makes overlapping particles bloom into bright colors.
+- Controls: The Start/Stop toggle switches the emission timer on and off and can clear existing particles to reset the scene.
 
-                        particleContext.opacity = particle.opacity
-                        particleContext.fill(
-                            Path(ellipseIn: rect),
-                            with: .color(particle.color)
-                        )
-                    }
-                }
-                .background(Color.black)
-                .onAppear {
-                    engine.reset(in: geometry.frame(in: .local))
-                }
-                .onChange(of: geometry.size) { newSize in
-                    engine.reset(in: CGRect(origin: .zero, size: newSize))
-                }
-            }
+### Customization knobs
+- Colors: Choose from a palette or generate hues procedurally per burst.
+- Emission: Particle count per burst, initial speed range, spread, and burst shape (spherical, ring, or directional).
+- Physics: Gravity strength, drag coefficient, and particle lifetime/fade curves.
+- Visuals: Particle size range, glow/blur radius, and stroke vs. fill styles.
 
-            VStack {
-                Spacer()
-                Button(isRunning ? "Stop" : "Start") {
-                    isRunning.toggle()
-                    if isRunning {
-                        engine.start()
-                    } else {
-                        engine.stop()
-                    }
-                }
-                .font(.title2)
-                .padding()
-                .background(.white.opacity(0.1))
-                .clipShape(Capsule())
-                .padding(.bottom)
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
-@MainActor
-final class FireworksEngine: ObservableObject {
-    struct Rocket: Identifiable {
-        let id = UUID()
-        var position: CGPoint
-        var velocity: CGVector
-        var exploded = false
-    }
-
-    struct Particle: Identifiable {
-        let id = UUID()
-        var position: CGPoint
-        var velocity: CGVector
-        var color: Color
-        var radius: CGFloat
-        var lifetime: TimeInterval
-        var createdAt: Date
-
-        var age: TimeInterval {
-            Date().timeIntervalSince(createdAt)
-        }
-
-        var opacity: Double {
-            max(0, 1 - age / lifetime)
-        }
-    }
-
-    @Published private(set) var rockets: [Rocket] = []
-    @Published private(set) var particles: [Particle] = []
-
-    private var lastUpdate: Date = .distantPast
-    private var launchTimer: TimeInterval = 0
-    private var nextLaunchInterval: TimeInterval = 0
-
-    private var bounds: CGRect = .zero
-    private var isRunning = false
-
-    // Constants
-    private let gravity: CGFloat = 300
-    private let drag: CGFloat = 0.9
-    private let rocketSpeedRange: ClosedRange<CGFloat> = 400 ... 600
-    private let rocketLaunchIntervalRange: ClosedRange<TimeInterval> = 0.15 ... 0.3
-
-    func reset(in rect: CGRect) {
-        bounds = rect
-        rockets.removeAll()
-        particles.removeAll()
-        lastUpdate = .distantPast
-        launchTimer = 0
-        nextLaunchInterval = TimeInterval.random(in: rocketLaunchIntervalRange)
-    }
-
-    func start() {
-        isRunning = true
-    }
-
-    func stop() {
-        isRunning = false
-    }
-
-    func step(time: Date, in rect: CGRect) {
-        if lastUpdate == .distantPast {
-            lastUpdate = time
-            return
-        }
-
-        let dt = min(time.timeIntervalSince(lastUpdate), 1/30)
-        lastUpdate = time
-        bounds = rect
-
-        guard isRunning else { return }
-
-        // Launch rockets at intervals
-        launchTimer += dt
-        if launchTimer > nextLaunchInterval {
-            launchTimer = 0
-            nextLaunchInterval = TimeInterval.random(in: rocketLaunchIntervalRange)
-            launchRocket()
-        }
-
-        // Update rockets
-        var newRockets: [Rocket] = []
-        for var rocket in rockets {
-            // Update position and velocity
-            rocket.velocity.dy += gravity * CGFloat(dt)
-            rocket.velocity.dx *= drag
-            rocket.velocity.dy *= drag
-            rocket.position.x += rocket.velocity.dx * CGFloat(dt)
-            rocket.position.y += rocket.velocity.dy * CGFloat(dt)
-
-            // Explode if velocity downward or reached near top quarter
-            if !rocket.exploded && (rocket.velocity.dy > 0 || rocket.position.y < bounds.height * 0.25) {
-                explode(rocket: rocket)
-                rocket.exploded = true
-            }
-
-            // Keep rockets that have not exploded and are within bounds
-            if !rocket.exploded && bounds.contains(rocket.position) {
-                newRockets.append(rocket)
-            }
-        }
-        rockets = newRockets
-
-        // Update particles
-        var newParticles: [Particle] = []
-        for var particle in particles {
-            particle.velocity.dy += gravity * CGFloat(dt) * 0.3
-            particle.velocity.dx *= drag
-            particle.velocity.dy *= drag
-
-            particle.position.x += particle.velocity.dx * CGFloat(dt)
-            particle.position.y += particle.velocity.dy * CGFloat(dt)
-
-            if particle.opacity > 0 && bounds.insetBy(dx: -50, dy: -50).contains(particle.position) {
-                newParticles.append(particle)
-            }
-        }
-        particles = newParticles
-    }
-
-    private func launchRocket() {
-        let x = CGFloat.random(in: bounds.width * 0.1 ... bounds.width * 0.9)
-        let y = bounds.height
-        let position = CGPoint(x: x, y: y)
-
-        let targetX = CGFloat.random(in: bounds.width * 0.2 ... bounds.width * 0.8)
-        let targetY = CGFloat.random(in: bounds.height * 0.05 ... bounds.height * 0.3)
-        let target = CGPoint(x: targetX, y: targetY)
-
-        let dx = target.x - position.x
-        let dy = target.y - position.y
-        let length = sqrt(dx*dx + dy*dy)
-        let speed = CGFloat.random(in: rocketSpeedRange)
-        let velocity = CGVector(dx: dx / length * speed, dy: dy / length * speed)
-
-        let rocket = Rocket(position: position, velocity: velocity)
-        rockets.append(rocket)
-    }
-
-    private func explode(rocket: Rocket) {
-        let count = Int.random(in: 70 ... 130)
-        let baseHue = Double.random(in: 0 ... 1)
-
-        for _ in 0..<count {
-            let angle = Double.random(in: 0 ... 2 * .pi)
-            let speed = Double.random(in: 100 ... 400)
-            let velocity = CGVector(dx: cos(angle) * speed, dy: sin(angle) * speed)
-
-            let radius = CGFloat.random(in: 2 ... 5)
-            let lifetime = TimeInterval.random(in: 1 ... 2)
-
-            let hue = baseHue + Double.random(in: -0.05 ... 0.05)
-            let color = Color(hue: hue.truncatingRemainder(dividingBy: 1), saturation: 1, brightness: 1)
-
-            let particle = Particle(
-                position: rocket.position,
-                velocity: velocity,
-                color: color,
-                radius: radius,
-                lifetime: lifetime,
-                createdAt: Date()
-            )
-            particles.append(particle)
-        }
-    }
-}
-
-@main
-struct FireworksApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-    }
-}
+### Performance notes
+- Keep the total live particle count bounded (e.g., cap per-burst count and prune fully faded particles).
+- Batch all drawing inside a single `Canvas` with additive blending instead of layering many separate views.
+- Prefer value semantics for particle data and avoid unnecessary allocations each frame.
+- Consider using `.drawingGroup()` on the container view if you want GPU-accelerated compositing.
