@@ -14,7 +14,7 @@ A lightweight SwiftUI demo that renders colorful, animated fireworks using `Canv
 - Rendering & blending: The `Canvas` draws soft circles (or radial gradients) for each particle. Additive blending (e.g., `.blendMode(.plusLighter)`) makes overlapping particles bloom into bright colors.
 - Controls: The Start/Stop toggle switches the emission timer on and off and can clear existing particles to reset the scene.
 
-### Customization knobs
+### Customization knobs (not yet implemented)
 - Colors: Choose from a palette or generate hues procedurally per burst.
 - Emission: Particle count per burst, initial speed range, spread, and burst shape (spherical, ring, or directional).
 - Physics: Gravity strength, drag coefficient, and particle lifetime/fade curves.
